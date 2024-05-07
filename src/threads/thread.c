@@ -24,6 +24,10 @@
    that are ready to run but not actually running. */
 static struct list ready_list;
 
+/* List of processes in THREAD_BLOCKED state, that is, processes
+   that are sleep until timer interrupts */
+static struct list sleep_list;
+
 /* List of all processes.  Processes are added to this list
    when they are first scheduled and removed when they exit. */
 static struct list all_list;
@@ -61,6 +65,9 @@ bool thread_mlfqs;
 
 static void kernel_thread (thread_func *, void *aux);
 
+static bool target_wake_ticks_less (const struct list_elem *a_, 
+                                    const struct list_elem *b_,
+                                    void *aux UNUSED);
 static void idle (void *aux UNUSED);
 static struct thread *running_thread (void);
 static struct thread *next_thread_to_run (void);
@@ -70,6 +77,17 @@ static void *alloc_frame (struct thread *, size_t size);
 static void schedule (void);
 void thread_schedule_tail (struct thread *prev);
 static tid_t allocate_tid (void);
+
+static bool
+target_wake_ticks_less (const struct list_elem *a_, 
+                        const struct list_elem *b_,
+                        void *aux UNUSED) 
+{
+  const struct thread *a = list_entry (a_, struct thread, elem);
+  const struct thread *b = list_entry (b_, struct thread, elem);
+  
+  return a->target_wake_ticks < b->target_wake_ticks;
+}
 
 /* Initializes the threading system by transforming the code
    that's currently running into a thread.  This can't work in
@@ -91,6 +109,7 @@ thread_init (void)
 
   lock_init (&tid_lock);
   list_init (&ready_list);
+  list_init (&sleep_list);
   list_init (&all_list);
 
   /* Set up a thread structure for the running thread. */
@@ -239,6 +258,42 @@ thread_unblock (struct thread *t)
   ASSERT (t->status == THREAD_BLOCKED);
   list_push_back (&ready_list, &t->elem);
   t->status = THREAD_READY;
+  intr_set_level (old_level);
+}
+
+void
+thread_sleep (int64_t ticks) 
+{ 
+  struct thread *cur = thread_current ();
+  struct list_elem *e;
+  
+  ASSERT (!intr_context ());
+  
+  enum intr_level old_level = intr_disable ();
+  cur->target_wake_ticks = ticks;
+  list_insert_ordered (&sleep_list, &cur->elem, target_wake_ticks_less, NULL);
+  thread_block ();
+  intr_set_level (old_level);
+}
+
+void
+thread_awake () 
+{
+  enum intr_level old_level = intr_disable ();
+  int64_t ticks = timer_ticks ();
+  struct list_elem *e = list_begin (&sleep_list);
+  while (e != list_end (&sleep_list))
+    {
+      struct thread *t = list_entry (e, struct thread, elem);
+      if (t->target_wake_ticks <= ticks)
+        {
+          list_pop_front (&sleep_list);
+          thread_unblock (t);
+        }
+      else
+        break;
+      e = list_begin (&sleep_list);
+    }
   intr_set_level (old_level);
 }
 
