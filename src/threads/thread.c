@@ -68,9 +68,6 @@ static void kernel_thread (thread_func *, void *aux);
 static bool target_wake_ticks_less (const struct list_elem *a_, 
                                     const struct list_elem *b_,
                                     void *aux UNUSED);
-static bool priority_greater (const struct list_elem *a_, 
-                              const struct list_elem *b_,
-                              void *aux UNUSED);
 static void idle (void *aux UNUSED);
 static struct thread *running_thread (void);
 static struct thread *next_thread_to_run (void);
@@ -92,14 +89,14 @@ target_wake_ticks_less (const struct list_elem *a_,
   return a->target_wake_ticks < b->target_wake_ticks;
 }
 
-static bool
-priority_greater (const struct list_elem *a_, const struct list_elem *b_,
+bool
+priority_less (const struct list_elem *a_, const struct list_elem *b_,
                   void *aux UNUSED) 
 {
   const struct thread *a = list_entry (a_, struct thread, elem);
   const struct thread *b = list_entry (b_, struct thread, elem);
   
-  return a->priority > b->priority;
+  return a->priority < b->priority;
 }
 
 /* Initializes the threading system by transforming the code
@@ -270,7 +267,7 @@ thread_unblock (struct thread *t)
 
   old_level = intr_disable ();
   ASSERT (t->status == THREAD_BLOCKED);
-  list_insert_ordered (&ready_list, &t->elem, priority_greater, NULL);
+  list_push_back (&ready_list, &t->elem);
   t->status = THREAD_READY;
   intr_set_level (old_level);
 }
@@ -377,7 +374,7 @@ thread_yield (void)
 
   old_level = intr_disable ();
   if (cur != idle_thread) 
-    list_insert_ordered (&ready_list, &cur->elem, priority_greater, NULL);
+    list_push_back (&ready_list, &cur->elem);
   cur->status = THREAD_READY;
   schedule ();
   intr_set_level (old_level);
@@ -563,7 +560,11 @@ next_thread_to_run (void)
   if (list_empty (&ready_list))
     return idle_thread;
   else
-    return list_entry (list_pop_front (&ready_list), struct thread, elem);
+    {
+      struct list_elem *e = list_max (&ready_list, priority_less, NULL);
+      list_remove (e);
+      return list_entry (e, struct thread, elem);
+    }
 }
 
 /* Completes a thread switch by activating the new thread's page
