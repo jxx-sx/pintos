@@ -1,6 +1,7 @@
 #ifndef THREADS_SYNCH_H
 #define THREADS_SYNCH_H
 
+#include <debug.h>
 #include <list.h>
 #include <stdbool.h>
 
@@ -22,12 +23,18 @@ struct lock
   {
     struct thread *holder;      /* Thread holding lock (for debugging). */
     struct semaphore semaphore; /* Binary semaphore controlling access. */
+    int priority;               /* Max priority among waiting threads. */
+    struct list_elem elem;      /* List element. */
   };
 
+bool lock_priority_less (const struct list_elem *a_, 
+                         const struct list_elem *b_,
+                         void *aux UNUSED);
 void lock_init (struct lock *);
 void lock_acquire (struct lock *);
 bool lock_try_acquire (struct lock *);
 void lock_release (struct lock *);
+void lock_update_priority (struct lock *);
 bool lock_held_by_current_thread (const struct lock *);
 
 /* Condition variable. */

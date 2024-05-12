@@ -401,8 +401,13 @@ thread_foreach (thread_action_func *func, void *aux)
 void
 thread_set_priority (int new_priority) 
 {
-  thread_current ()->priority = new_priority;
+  enum intr_level old_level;
+
+  old_level = intr_disable ();
+  thread_current ()->base_priority = new_priority;
+  thread_update_priority (thread_current ());
   thread_yield ();
+  intr_set_level (old_level);
 }
 
 /* Returns the current thread's priority. */
@@ -410,6 +415,54 @@ int
 thread_get_priority (void) 
 {
   return thread_current ()->priority;
+}
+
+/* Update thread priority based on lock dependencies. */
+void
+thread_update_priority (struct thread *t) 
+{
+  ASSERT (intr_get_level () == INTR_OFF);
+  ASSERT (t != NULL);
+
+  t->priority = t->base_priority;
+  if (!list_empty (&t->locks))
+    {
+      struct list_elem *e = list_max (&t->locks, lock_priority_less, NULL);
+      int lock_priority = list_entry (e, struct lock, elem)->priority;
+      if (t->priority < lock_priority)
+        t->priority = lock_priority;
+    }
+  if (t->waiting_lock != NULL)
+    {
+      lock_update_priority (&t->waiting_lock);
+      if (t->waiting_lock->holder != NULL)
+        thread_update_priority (&t->waiting_lock->holder);
+    }
+}
+
+/* Donate the current thread's priority to the thread holding a lock 
+   that the current thread is waiting for. */
+void
+thread_donate_priority (void) 
+{
+  struct thread *cur = thread_current ();
+  struct thread *next;
+  struct lock *lock;
+
+  ASSERT (intr_get_level () == INTR_OFF);
+
+  while (cur->waiting_lock != NULL)
+    {
+      lock = cur->waiting_lock;
+      next = lock->holder;
+      if (lock->priority < cur->priority)
+        lock->priority = cur->priority;
+      if (next == NULL || cur->priority <= next->priority)
+        break;
+      else
+        next->priority = cur->priority;
+      cur = next;
+    }
 }
 
 /* Sets the current thread's nice value to NICE. */
@@ -529,7 +582,10 @@ init_thread (struct thread *t, const char *name, int priority)
   strlcpy (t->name, name, sizeof t->name);
   t->stack = (uint8_t *) t + PGSIZE;
   t->priority = priority;
+  t->base_priority = priority;
   t->magic = THREAD_MAGIC;
+  t->waiting_lock = NULL;
+  list_init (&t->locks);
 
   old_level = intr_disable ();
   list_push_back (&all_list, &t->allelem);

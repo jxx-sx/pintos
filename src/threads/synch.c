@@ -165,6 +165,17 @@ sema_test_helper (void *sema_)
     }
 }
 
+
+bool
+lock_priority_less (const struct list_elem *a_, const struct list_elem *b_,
+                    void *aux UNUSED)
+{
+  const struct lock *a = list_entry (a_, struct lock, elem);
+  const struct lock *b = list_entry (b_, struct lock, elem);
+
+  return a->priority < b->priority;
+}
+
 /* Initializes LOCK.  A lock can be held by at most a single
    thread at any given time.  Our locks are not "recursive", that
    is, it is an error for the thread currently holding a lock to
@@ -187,6 +198,7 @@ lock_init (struct lock *lock)
 
   lock->holder = NULL;
   sema_init (&lock->semaphore, 1);
+  lock->priority = PRI_MIN;
 }
 
 /* Acquires LOCK, sleeping until it becomes available if
@@ -200,12 +212,21 @@ lock_init (struct lock *lock)
 void
 lock_acquire (struct lock *lock)
 {
+  enum intr_level old_level;
+
   ASSERT (lock != NULL);
   ASSERT (!intr_context ());
   ASSERT (!lock_held_by_current_thread (lock));
 
+  old_level = intr_disable ();
+  thread_current ()->waiting_lock = lock;
+  thread_donate_priority ();
   sema_down (&lock->semaphore);
+  thread_current ()->waiting_lock = NULL;
+  list_push_back (&thread_current ()->locks, &lock->elem);
+  lock_update_priority (lock);
   lock->holder = thread_current ();
+  intr_set_level (old_level);
 }
 
 /* Tries to acquires LOCK and returns true if successful or false
@@ -236,11 +257,34 @@ lock_try_acquire (struct lock *lock)
 void
 lock_release (struct lock *lock) 
 {
+  enum intr_level old_level;
+
   ASSERT (lock != NULL);
   ASSERT (lock_held_by_current_thread (lock));
 
   lock->holder = NULL;
+  old_level = intr_disable ();
+  list_remove (&lock->elem);
+  thread_update_priority (thread_current ());
+  intr_set_level (old_level);
   sema_up (&lock->semaphore);
+}
+
+/* Update lock priority. */
+void
+lock_update_priority (struct lock *lock) 
+{
+  ASSERT (intr_get_level () == INTR_OFF);
+  ASSERT (lock != NULL);
+
+  struct list *waiters = &lock->semaphore.waiters;
+  if (list_empty (waiters))
+    lock->priority = PRI_MIN;
+  else
+    {
+      struct list_elem *e = list_max (waiters, priority_less, NULL);
+      lock->priority = list_entry (e, struct thread, elem)->priority;
+    }
 }
 
 /* Returns true if the current thread holds LOCK, false
