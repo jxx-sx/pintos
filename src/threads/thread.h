@@ -4,6 +4,7 @@
 #include <debug.h>
 #include <list.h>
 #include <stdint.h>
+#include "threads/fixed-point.h"
 
 /* States in a thread's life cycle. */
 enum thread_status
@@ -23,6 +24,11 @@ typedef int tid_t;
 #define PRI_MIN 0                       /* Lowest priority. */
 #define PRI_DEFAULT 31                  /* Default priority. */
 #define PRI_MAX 63                      /* Highest priority. */
+
+/* Thread niceness. */
+#define NICE_MIN -20                    /* Lowest niceness. */
+#define NICE_DEFAULT 0                  /* Default niceness. */
+#define NICE_MAX 20                     /* Highest niceness. */
 
 /* A kernel thread or user process.
 
@@ -91,6 +97,8 @@ struct thread
     int base_priority;                  /* Base priority. */
     struct list_elem allelem;           /* List element for all threads list. */
     int64_t target_wake_ticks;          /* Target wake ticks. */
+    int nice;                           /* Niceness */
+    int recent_cpu;                     /* Recent CPU */
 
     /* Shared between thread.c and synch.c. */
     struct list_elem elem;              /* List element. */
@@ -128,7 +136,7 @@ void thread_block (void);
 void thread_unblock (struct thread *);
 
 void thread_sleep (int64_t ticks);
-void thread_awake ();
+void thread_awake (void);
 
 struct thread *thread_current (void);
 tid_t thread_tid (void);
@@ -144,6 +152,10 @@ void thread_foreach (thread_action_func *, void *);
 int thread_get_priority (void);
 void thread_set_priority (int);
 void thread_update_priority (struct thread *t);
+void thread_update_priority_mlfqs (void);
+void thread_add_recent_cpu_mlfqs (void);
+void thread_update_recent_cpu_mlfqs (void);
+void thread_update_load_avg_mlfqs (void);
 void thread_donate_priority (void);
 
 int thread_get_nice (void);
